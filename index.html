@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IMAGE → MIDI</title>
+  <link rel="stylesheet" href="./css/main.css">
+</head>
+<body>
+  <div class="housing">
+    <div class="screw tl"></div>
+    <div class="screw tr"></div>
+    <div class="screw bl"></div>
+    <div class="screw br"></div>
+
+    <div class="top-plate">
+      <span class="logo-text">IMAGE → MIDI</span>
+      <div class="top-controls">
+        <button class="hw-btn" id="undo-btn" disabled title="Undo (⌘Z)">↩</button>
+        <button class="hw-btn" id="redo-btn" disabled title="Redo (⌘⇧Z)">↪</button>
+        <button class="hw-btn" id="projects-btn">PROJ</button>
+        <span id="midi-badge" class="warn">INIT…</span>
+      </div>
+      <button id="export-btn" style="display:none">EXPORT</button>
+      <button id="import-btn" style="display:none">IMPORT</button>
+      <input type="file" id="file-import" accept=".json" style="display:none">
+    </div>
+
+    <div class="body-area">
+      <div class="screen-section">
+        <div class="crt-bezel">
+          <div class="crt-inner">
+            <div id="drop-zone">
+              <input type="file" id="file-input" accept="image/*">
+              <div id="drop-placeholder">
+                <div class="drop-icon"><div class="drop-icon-inner"></div></div>
+                <div class="main-text">DROP IMAGE</div>
+              </div>
+              <canvas id="preview-canvas"></canvas>
+              <canvas id="viz-canvas"></canvas>
+              <div id="playhead"></div>
+            </div>
+          </div>
+          <div class="crt-footer">
+            <span class="crt-label">IMG_SLOT_01</span>
+            <span class="crt-label">SCAN READY</span>
+          </div>
+        </div>
+
+        <div id="track-strip"></div>
+
+        <div id="stats-bar">
+          <canvas id="stats-canvas"></canvas>
+          <div id="stats-text">
+            <div class="stat-line">ACTIVE <span class="stat-val" id="stat-active">—</span></div>
+            <div class="stat-line">AVG POLY <span class="stat-val" id="stat-poly">—</span></div>
+            <div class="stat-line">PITCH RNG <span class="stat-val" id="stat-range">—</span></div>
+            <div class="stat-line">NOTES/SEQ <span class="stat-val" id="stat-total">—</span></div>
+          </div>
+        </div>
+      </div>
+
+      <aside class="control-panel">
+        <div style="display:flex;gap:5px;align-items:center;padding:6px 2px 0;flex-shrink:0">
+          <span id="sidebar-track-label" style="font-size:10px;letter-spacing:2px;color:#6e7480;flex:1">TRACK 1</span>
+          <button class="tiny-btn" id="copy-settings-btn">COPY</button>
+          <button class="tiny-btn" id="paste-settings-btn" style="display:none">PASTE</button>
+          <div class="menu-wrap">
+            <button class="menu-btn" id="track-menu-btn" title="Track options">⋮</button>
+            <div class="menu-dropdown" id="track-menu-dropdown">
+              <button class="menu-item" id="rename-track-btn">RENAME TRACK</button>
+              <div class="menu-sep"></div>
+              <button class="menu-item danger" id="remove-track-btn">DELETE TRACK</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="ctrl-section" style="flex-shrink:0">
+          <div class="ctrl-title">MIDI OUTPUT</div>
+          <div class="ctrl-row">
+            <select id="midi-output" style="flex:1"><option value="">— none —</option></select>
+            <div class="channel-field">
+              <span class="channel-label">CH</span>
+              <input type="number" id="midi-channel" min="1" max="16" value="1" title="Channel">
+            </div>
+          </div>
+        </div>
+
+        <div class="knobs-section">
+          <div class="knobs-label">CONTROLS</div>
+          <div class="knobs-row">
+            <div class="knob-unit">
+              <div class="knob" id="knob-thresh" data-input="threshold" data-min="0" data-max="99">
+                <div class="knob-ring"></div>
+              </div>
+              <div class="knob-val" id="thresh-val">20%</div>
+              <label for="threshold">THRESH</label>
+            </div>
+            <div class="knob-unit">
+              <div class="knob" id="knob-veloc" data-input="velocity-scale" data-min="1" data-max="200">
+                <div class="knob-ring"></div>
+              </div>
+              <div class="knob-val" id="veloc-val">100%</div>
+              <label for="velocity-scale">VELOC</label>
+            </div>
+            <div class="knob-unit">
+              <div class="knob" id="knob-poly" data-input="max-poly" data-min="1" data-max="8">
+                <div class="knob-ring"></div>
+              </div>
+              <div class="knob-val" id="poly-val">3</div>
+              <label for="max-poly">POLY</label>
+            </div>
+            <div class="knob-unit">
+              <div class="knob" id="knob-density" data-input="density" data-min="0" data-max="100">
+                <div class="knob-ring"></div>
+              </div>
+              <div class="knob-val" id="density-val">100%</div>
+              <label for="density">DENSITY</label>
+            </div>
+          </div>
+          <input type="range" id="threshold" min="0" max="99" value="20" style="display:none">
+          <input type="range" id="velocity-scale" min="1" max="200" value="100" style="display:none">
+          <input type="range" id="max-poly" min="1" max="8" value="3" style="display:none">
+          <input type="range" id="density" min="0" max="100" value="100" style="display:none">
+          <div class="knobs-meta">
+            <div class="ctrl-row">
+              <div class="ctrl-lbl">COLOR</div>
+              <select id="color-mode">
+                <option value="luma">Luma</option>
+                <option value="rgb">R/G/B</option>
+                <option value="hue">Hue</option>
+              </select>
+            </div>
+            <div class="ctrl-row ctrl-row-inline">
+              <div class="ctrl-lbl">NORM</div>
+              <input type="checkbox" id="normalize" checked>
+              <div class="ctrl-lbl compact-lbl">INVERT</div>
+              <input type="checkbox" id="invert-mode">
+            </div>
+          </div>
+        </div>
+
+        <div class="ctrl-section note-filter-section">
+          <div class="section-top">
+            <div class="section-label">NOTE RANGE</div>
+          </div>
+          <div class="dual-range-section">
+            <div class="note-range-row">
+              <input type="text" id="note-min-txt" class="note-input" value="C2">
+              <div class="dual-range-bar" id="dual-range-bar">
+                <div class="dual-range-fill" id="dual-range-fill"></div>
+                <div class="dr-thumb" id="dr-thumb-lo" title="Low note"></div>
+                <div class="dr-thumb" id="dr-thumb-hi" title="High note"></div>
+              </div>
+              <input type="text" id="note-max-txt" class="note-input" value="C6">
+            </div>
+          </div>
+          <input type="range" id="note-min" min="0" max="127" value="36" style="display:none">
+          <input type="range" id="note-max" min="0" max="127" value="84" style="display:none">
+          <div class="ctrl-row">
+            <div class="ctrl-lbl">CHORD</div>
+            <select id="chord-type">
+              <option value="none">None</option>
+              <option value="power">Power</option>
+              <option value="major" selected>Major</option>
+              <option value="minor">Minor</option>
+              <option value="sus2">Sus2</option>
+              <option value="sus4">Sus4</option>
+              <option value="maj7">Maj7</option>
+              <option value="min7">Min7</option>
+              <option value="dom7">Dom7</option>
+            </select>
+          </div>
+          <div class="section-top key-selection-head">
+            <div class="section-label">KEY SELECTION</div>
+            <div class="filter-actions">
+              <button class="tiny-btn" id="filter-all-btn" type="button">ALL</button>
+              <button class="tiny-btn" id="filter-none-btn" type="button">NONE</button>
+            </div>
+          </div>
+          <div id="piano-keyboard" class="piano-wrap"></div>
+        </div>
+
+        <div class="ctrl-section">
+          <div class="ctrl-title">SEQUENCER</div>
+          <div class="seq-grid">
+            <div class="seq-cell">
+              <span class="seq-lbl">BPM</span>
+              <input type="number" id="bpm" min="10" max="400" value="120">
+            </div>
+            <div class="seq-cell">
+              <span class="seq-lbl">STEPS</span>
+              <input type="number" id="steps" min="4" max="512" value="64">
+            </div>
+            <div class="seq-cell">
+              <span class="seq-lbl">DIV</span>
+              <select id="note-div">
+                <option value="0.25">1</option>
+                <option value="0.5">1/2</option>
+                <option value="1">1/4</option>
+                <option value="2" selected>1/8</option>
+                <option value="4">1/16</option>
+                <option value="8">1/32</option>
+              </select>
+            </div>
+            <div class="seq-cell">
+              <span class="seq-lbl">LOOP</span>
+              <input type="checkbox" id="loop-mode" checked>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <div class="transport-bar">
+      <div class="transport-group">
+        <button class="t-btn orange" id="transport-play-btn" disabled title="Play/Stop (Space)">▶</button>
+      </div>
+      <div id="progress-track"><div id="progress-fill"></div></div>
+      <span id="step-label">— / —</span>
+      <button id="transport-rew" style="display:none">⏮</button>
+      <button id="transport-pause" style="display:none">⏸</button>
+      <button id="transport-rec" style="display:none">⏺</button>
+      <button id="play-btn" style="display:none" disabled>PLAY</button>
+    </div>
+
+    <div class="bottom-engrave">
+      <span>PRECISION ANALOG CIRCUITRY</span>
+      <span>MADE IN JAPAN // MOD-04 TERMINAL</span>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+  <div id="confirm-overlay">
+    <div id="confirm-panel">
+      <div id="confirm-msg">Delete this track?</div>
+      <div class="confirm-btns">
+        <button id="confirm-cancel">CANCEL</button>
+        <button id="confirm-ok">DELETE</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="projects-overlay">
+    <div id="projects-panel">
+      <div class="proj-hdr">
+        <span>PROJECTS</span>
+        <button class="proj-close" id="proj-close-btn">×</button>
+      </div>
+      <div class="proj-save-row">
+        <input type="text" class="proj-name-input" id="proj-name-input" placeholder="Name this session…" maxlength="60">
+        <button class="proj-save-btn" id="proj-save-btn">SAVE</button>
+      </div>
+      <div class="proj-list" id="proj-list"></div>
+    </div>
+  </div>
+
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>
