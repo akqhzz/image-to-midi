@@ -33,6 +33,31 @@ export function snapToAllowed(note, allowedPitchClasses) {
   return clamp(note, 0, 127);
 }
 
+export function snapToAllowedInRange(note, allowedPitchClasses, minNote, maxNote) {
+  if (!allowedPitchClasses || allowedPitchClasses.size === 0) {
+    return null;
+  }
+
+  const min = clamp(minNote, 0, 127);
+  const max = clamp(maxNote, 0, 127);
+  if (min > max) return null;
+
+  let best = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+
+  for (let candidate = min; candidate <= max; candidate += 1) {
+    if (!allowedPitchClasses.has(normalizePitchClass(candidate))) continue;
+
+    const distance = Math.abs(candidate - note);
+    if (distance < bestDistance || (distance === bestDistance && best !== null && candidate < best)) {
+      best = candidate;
+      bestDistance = distance;
+    }
+  }
+
+  return best;
+}
+
 export function rgbToHsl(r, g, b) {
   const nr = r / 255;
   const ng = g / 255;

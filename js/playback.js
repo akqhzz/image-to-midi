@@ -4,24 +4,46 @@ import { computeAllSequences } from './sequence.js';
 import { appState, getActiveTrack } from './state.js';
 import { drawStats, syncTransport } from './ui.js';
 
+const playbackHooks = {
+  activateTrack: null,
+};
+
+export function setPlaybackHooks(hooks) {
+  playbackHooks.activateTrack = hooks?.activateTrack || null;
+}
+
 export function startPlayback() {
   if (!appState.selectedOutput) return;
   computeAllSequences();
   appState.isPlaying = true;
   refs.playBtn.textContent = 'STOP';
-  for (const track of appState.tracks) {
-    if (track.sequence.length > 0) playTrackStep(track, 0);
+  stopTrackTimers();
+  const startRatio = Math.max(0, Math.min(1, appState.playbackStartRatio || 0));
+
+  if (appState.playbackScope === 'current') {
+    const activeTrack = getActiveTrack();
+    if (activeTrack?.sequence.length > 0) {
+      const startStep = ratioToStep(activeTrack, startRatio);
+      playTrackStep(activeTrack, startStep);
+    }
+  } else {
+    for (const track of appState.tracks) {
+      if (track.sequence.length > 0) {
+        const startStep = ratioToStep(track, startRatio);
+        playTrackStep(track, startStep);
+      }
+    }
   }
   syncTransport();
 }
 
 export function stopPlayback() {
-  appState.isPlaying = false;
-  for (const track of appState.tracks) {
-    clearTimeout(track.timer);
-    track.timer = null;
-    trackAllNotesOff(track);
+  const progressPct = Number.parseFloat(refs.progressFill.style.width) || 0;
+  if (progressPct > 0) {
+    appState.playbackStartRatio = Math.max(0, Math.min(1, progressPct / 100));
   }
+  appState.isPlaying = false;
+  stopTrackTimers();
 
   refs.playBtn.textContent = 'PLAY';
   refs.playhead.style.display = 'none';
@@ -29,6 +51,14 @@ export function stopPlayback() {
   const activeTrack = getActiveTrack();
   if (activeTrack) refs.stepLabel.textContent = `— / ${activeTrack.steps}`;
   syncTransport();
+}
+
+function stopTrackTimers() {
+  for (const track of appState.tracks) {
+    clearTimeout(track.timer);
+    track.timer = null;
+    trackAllNotesOff(track);
+  }
 }
 
 function playTrackStep(track, step) {
@@ -59,9 +89,70 @@ function playTrackStep(track, step) {
 
   const nextStep = step + 1;
   if (nextStep >= steps) {
-    if (track.loop) track.timer = setTimeout(() => playTrackStep(track, 0), ms);
-    else track.timer = setTimeout(() => trackAllNotesOff(track), ms);
+    if (track.loop) {
+      track.timer = setTimeout(() => playTrackStep(track, 0), ms);
+    } else if (appState.playbackScope === 'current') {
+      track.timer = setTimeout(() => advanceToNextTrack(track), ms);
+    } else {
+      track.timer = setTimeout(() => finishTrackPlayback(track), ms);
+    }
   } else {
     track.timer = setTimeout(() => playTrackStep(track, nextStep), ms);
   }
+}
+
+function advanceToNextTrack(track) {
+  trackAllNotesOff(track);
+  track.timer = null;
+  if (!appState.isPlaying) return;
+
+  const currentIndex = appState.tracks.findIndex((item) => item.id === track.id);
+  const nextTrack = appState.tracks
+    .slice(currentIndex + 1)
+    .find((item) => item.analysisCanvas && item.sequence.length > 0);
+
+  if (!nextTrack) {
+    stopPlayback();
+    return;
+  }
+
+  playbackHooks.activateTrack?.(nextTrack.id);
+  playTrackStep(nextTrack, 0);
+}
+
+function finishTrackPlayback(track) {
+  trackAllNotesOff(track);
+  track.timer = null;
+  if (!appState.isPlaying) return;
+
+  const anyRunning = appState.tracks.some((item) => item.timer !== null);
+  if (!anyRunning) stopPlayback();
+}
+
+export function seekPlayback(ratio) {
+  appState.playbackStartRatio = Math.max(0, Math.min(1, ratio));
+  const activeTrack = getActiveTrack();
+  if (!activeTrack?.analysisCanvas) return;
+
+  const step = ratioToStep(activeTrack, appState.playbackStartRatio);
+  const steps = activeTrack.sequence.length || activeTrack.steps;
+  const pct = steps > 0 ? (step / steps) * 100 : 0;
+  refs.progressFill.style.width = `${pct}%`;
+  refs.stepLabel.textContent = `${step + 1} / ${steps}`;
+  if (activeTrack.imgBounds) {
+    const { dx, dw } = activeTrack.imgBounds;
+    refs.playhead.style.left = `${dx + pct / 100 * dw}px`;
+    refs.playhead.style.display = 'block';
+  }
+  drawStats(step);
+
+  if (appState.isPlaying) {
+    stopPlayback();
+    startPlayback();
+  }
+}
+
+function ratioToStep(track, ratio) {
+  const steps = track.sequence.length || track.steps || 1;
+  return Math.max(0, Math.min(steps - 1, Math.floor(ratio * steps)));
 }

@@ -3,9 +3,9 @@ import { exportSession, getProjects, importSessionFile, loadFromStorage, saveToS
 import { initMidi, refreshOutputs, updateSelectedOutput, trackAllNotesOff } from './midi.js';
 import { computeSequence } from './sequence.js';
 import { appState, applySettings, createTrack, ensureTrackPresence, getActiveTrack, serializeSettings, trackDisplayName } from './state.js';
-import { drawStats, refreshKnobs, renderProjectsList, renderSidebar, renderTrackStrip, syncPreviewDisplay, updateFilterCount, updatePlayBtn } from './ui.js';
-import { midiNoteName, parseNoteName, showToast } from './utils.js';
-import { startPlayback, stopPlayback } from './playback.js';
+import { drawStats, refreshKnobs, renderProjectsList, renderSidebar, renderTrackStrip, syncPreviewDisplay, syncProjectTitle, updateFilterCount, updatePlayBtn } from './ui.js';
+import { clamp, midiNoteName, parseNoteName, showToast } from './utils.js';
+import { seekPlayback, setPlaybackHooks, startPlayback, stopPlayback } from './playback.js';
 import { MAX_HIST } from './constants.js';
 
 const sidebarActions = {
@@ -25,9 +25,13 @@ const stripActions = {
   onAddTrack: addNewTrack,
   onSelectTrack: setActiveTrack,
   onConfirmRemoveTrack: confirmRemoveTrack,
+  onDuplicateTrack: duplicateTrack,
+  onReorderTrack: reorderTrack,
   onRenameTrack(track, name) {
+    pushHistory();
     track.name = name;
     renderSidebar(sidebarActions);
+    renderTrackStrip(stripActions);
     saveToStorage();
   },
   onToggleMute(track) {
@@ -41,9 +45,14 @@ function captureSnap() {
   return {
     trackIdSeq: appState.trackIdSeq,
     activeTrackId: appState.activeTrackId,
+    currentProjectId: appState.currentProjectId,
+    currentProjectName: appState.currentProjectName,
+    settingsClipboard: appState.settingsClipboard ? structuredClone(appState.settingsClipboard) : null,
+    projects: getProjects(),
     tracks: appState.tracks.map((track) => ({
       id: track.id,
       analysisCanvas: track.analysisCanvas,
+      imageDataUrl: track.imageDataUrl,
       imgBounds: track.imgBounds ? { ...track.imgBounds } : null,
       settings: serializeSettings(track),
     })),
@@ -66,6 +75,7 @@ function applySnap(snapshot) {
     const track = createTrack();
     track.id = item.id;
     track.analysisCanvas = item.analysisCanvas;
+    track.imageDataUrl = item.imageDataUrl || null;
     track.imgBounds = item.imgBounds;
     applySettings(track, item.settings);
     computeSequence(track);
@@ -73,11 +83,16 @@ function applySnap(snapshot) {
   }
   appState.trackIdSeq = snapshot.trackIdSeq;
   appState.activeTrackId = snapshot.activeTrackId;
+  appState.currentProjectId = snapshot.currentProjectId ?? null;
+  appState.currentProjectName = snapshot.currentProjectName ?? '';
+  appState.settingsClipboard = snapshot.settingsClipboard ? structuredClone(snapshot.settingsClipboard) : null;
+  if (Array.isArray(snapshot.projects)) setProjects(snapshot.projects);
   ensureTrackPresence();
   if (!appState.tracks.find((track) => track.id === appState.activeTrackId)) {
     appState.activeTrackId = appState.tracks[0].id;
   }
   appState.historyBlocked = false;
+  syncProjectTitle();
   syncPreviewDisplay(getActiveTrack());
   renderSidebar(sidebarActions);
   renderTrackStrip(stripActions);
@@ -147,6 +162,8 @@ function fitImageBounds(track) {
 }
 
 function loadImage(file, track) {
+  if (!track) return;
+  if (appState.activeTrackId !== track.id) setActiveTrack(track.id);
   const url = URL.createObjectURL(file);
   const image = new Image();
   image.onload = () => {
@@ -157,6 +174,11 @@ function loadImage(file, track) {
     analysisCanvas.getContext('2d').drawImage(image, 0, 0);
 
     track.analysisCanvas = analysisCanvas;
+    try {
+      track.imageDataUrl = analysisCanvas.toDataURL('image/jpeg', 0.75);
+    } catch {
+      track.imageDataUrl = null;
+    }
 
     const finalizeImageLoad = (attempt = 0) => {
       if (!fitImageBounds(track) && attempt < 12) {
@@ -169,6 +191,11 @@ function loadImage(file, track) {
       if (track.id === appState.activeTrackId) {
         syncPreviewDisplay(track);
         drawStats();
+      }
+      if (appState.isPlaying && appState.playbackScope === 'current' && track.id === appState.activeTrackId) {
+        stopPlayback();
+        startPlayback();
+        return;
       }
       updatePlayBtn();
       saveToStorage();
@@ -198,6 +225,50 @@ function addNewTrack() {
   renderSidebar(sidebarActions);
   renderTrackStrip(stripActions);
   refs.fileInput.click();
+}
+
+function duplicateTrack(sourceTrack) {
+  pushHistory();
+  const track = createTrack();
+  applySettings(track, serializeSettings(sourceTrack));
+  track.name = sourceTrack.name ? `${sourceTrack.name} Copy` : '';
+  track.imageDataUrl = sourceTrack.imageDataUrl;
+  track.imgBounds = sourceTrack.imgBounds ? { ...sourceTrack.imgBounds } : null;
+
+  if (sourceTrack.analysisCanvas) {
+    const canvas = document.createElement('canvas');
+    canvas.width = sourceTrack.analysisCanvas.width;
+    canvas.height = sourceTrack.analysisCanvas.height;
+    canvas.getContext('2d').drawImage(sourceTrack.analysisCanvas, 0, 0);
+    track.analysisCanvas = canvas;
+  }
+
+  computeSequence(track);
+  appState.tracks.push(track);
+  setActiveTrack(track.id);
+  saveToStorage();
+  showToast('TRACK DUPLICATED');
+}
+
+function reorderTrack(sourceId, targetId, placement = 'before') {
+  if (sourceId === targetId) return;
+  const sourceIndex = appState.tracks.findIndex((track) => track.id === sourceId);
+  const targetIndex = appState.tracks.findIndex((track) => track.id === targetId);
+  if (sourceIndex < 0 || targetIndex < 0) return;
+
+  pushHistory();
+  const [moved] = appState.tracks.splice(sourceIndex, 1);
+  const nextTargetIndex = appState.tracks.findIndex((track) => track.id === targetId);
+  const insertIndex = placement === 'after' ? nextTargetIndex + 1 : nextTargetIndex;
+  appState.tracks.splice(insertIndex, 0, moved);
+  renderTrackStrip(stripActions);
+  renderSidebar(sidebarActions);
+  saveToStorage();
+}
+
+function startPlaybackFromBeginning() {
+  appState.playbackStartRatio = 0;
+  startPlayback();
 }
 
 function removeTrack(id) {
@@ -372,58 +443,174 @@ function initKnobs() {
       input.value = String(value);
       input.dispatchEvent(new Event('input', { bubbles: true }));
     }, { passive: false });
+
+    knob.addEventListener('dblclick', (event) => {
+      event.preventDefault();
+      if (input.value === input.defaultValue) return;
+      pushHistory();
+      appState.suppressHistory = true;
+      input.value = input.defaultValue;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      appState.suppressHistory = false;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
   }
 
   refreshKnobs();
 }
 
 function openProjectsPanel() {
+  refs.projSaveRow.style.display = 'none';
   renderProjects();
   refs.projectsOverlay.classList.add('open');
-  refs.projNameInput.value = '';
-  setTimeout(() => refs.projNameInput.focus(), 60);
+  refs.projNameInput.value = appState.currentProjectName || '';
 }
 
 function closeProjectsPanel() {
+  appState.editingProjectId = null;
   refs.projectsOverlay.classList.remove('open');
+}
+
+function openProjectSavePanel() {
+  refs.projSaveRow.style.display = 'flex';
+  renderProjects();
+  refs.projectsOverlay.classList.add('open');
+  refs.projNameInput.value = appState.currentProjectName || '';
+  setTimeout(() => refs.projNameInput.focus(), 60);
 }
 
 function renderProjects() {
   renderProjectsList(getProjects(), {
     onLoad: loadProject,
+    onRename(id) {
+      appState.editingProjectId = id;
+      renderProjects();
+    },
+    onCommitRename: commitProjectRename,
+    onCancelRename() {
+      appState.editingProjectId = null;
+      renderProjects();
+    },
+    onDuplicate: duplicateProject,
     onDelete(id) {
       const project = getProjects().find((p) => p.id === id);
       const name = project?.name || 'this project';
       showConfirm(`DELETE "${name.toUpperCase()}"?`, () => {
+        pushHistory();
         setProjects(getProjects().filter((p) => p.id !== id));
+        if (appState.currentProjectId === id) {
+          appState.currentProjectId = null;
+          appState.currentProjectName = '';
+          syncProjectTitle();
+          saveToStorage();
+        }
         renderProjects();
       });
     },
   });
 }
 
-function saveProject() {
-  const name = refs.projNameInput.value.trim();
-  if (!name) {
-    refs.projNameInput.focus();
-    return;
-  }
-
-  const projects = getProjects();
-  projects.unshift({
-    id: Date.now(),
+function buildProjectSnapshot(name, id = Date.now()) {
+  return {
+    id,
     name,
     timestamp: new Date().toISOString(),
     tracks: appState.tracks.map((track) => ({
       id: track.id,
       settings: serializeSettings(track),
-      imageDataUrl: track.analysisCanvas ? (() => { try { return track.analysisCanvas.toDataURL('image/jpeg', 0.75); } catch { return null; } })() : null,
+      imageDataUrl: track.imageDataUrl || (track.analysisCanvas ? (() => { try { return track.analysisCanvas.toDataURL('image/jpeg', 0.75); } catch { return null; } })() : null),
     })),
-  });
+  };
+}
+
+function persistProject(name, existingId = null) {
+  const projectId = existingId || Date.now();
+  const nextProject = buildProjectSnapshot(name, projectId);
+  const projects = getProjects().filter((project) => project.id !== projectId);
+  projects.unshift(nextProject);
+  setProjects(projects);
+  appState.currentProjectId = projectId;
+  appState.currentProjectName = name;
+  saveToStorage();
+  return nextProject;
+}
+
+function saveProject() {
+  const name = refs.projNameInput.value.trim() || appState.currentProjectName;
+  if (!name) {
+    refs.projNameInput.focus();
+    return;
+  }
+
+  persistProject(name, appState.currentProjectId);
+  syncProjectTitle();
+  renderProjects();
+  refs.projNameInput.value = name;
+  showToast('PROJECT SAVED');
+}
+
+function quickSaveProject() {
+  if (!appState.currentProjectName) {
+    openProjectSavePanel();
+    return;
+  }
+
+  persistProject(appState.currentProjectName, appState.currentProjectId);
+  syncProjectTitle();
+  showToast('PROGRESS SAVED');
+}
+
+function renameProject(id) {
+  appState.editingProjectId = id;
+  renderProjects();
+}
+
+function commitProjectRename(id, nextName) {
+  const project = getProjects().find((item) => item.id === id);
+  appState.editingProjectId = null;
+  if (!project || !nextName || nextName === project.name) {
+    renderProjects();
+    return;
+  }
+
+  pushHistory();
+  const projects = getProjects().map((item) => (item.id === id ? { ...item, name: nextName } : item));
+  setProjects(projects);
+  if (appState.currentProjectId === id) {
+    appState.currentProjectName = nextName;
+    syncProjectTitle();
+    saveToStorage();
+  }
+  renderProjects();
+  showToast('PROJECT RENAMED');
+}
+
+function duplicateProject(id) {
+  const project = getProjects().find((item) => item.id === id);
+  if (!project) return;
+
+  pushHistory();
+  const duplicate = {
+    ...project,
+    id: Date.now(),
+    name: `${project.name} Copy`,
+    timestamp: new Date().toISOString(),
+  };
+  const projects = getProjects();
+  projects.unshift(duplicate);
   setProjects(projects);
   renderProjects();
-  refs.projNameInput.value = '';
-  showToast('PROJECT SAVED');
+  showToast('PROJECT DUPLICATED');
+}
+
+function deleteCurrentProject() {
+  pushHistory();
+
+  if (appState.currentProjectId) {
+    setProjects(getProjects().filter((project) => project.id !== appState.currentProjectId));
+  }
+
+  createNewProject({ skipHistory: true, toastMessage: 'PROJECT DELETED' });
 }
 
 function loadProject(id) {
@@ -439,6 +626,7 @@ function loadProject(id) {
     if (trackId >= appState.trackIdSeq) appState.trackIdSeq = trackId + 1;
     applySettings(track, settings);
     if (imageDataUrl) {
+      track.imageDataUrl = imageDataUrl;
       const img = new Image();
       img.onload = () => {
         const canvas = document.createElement('canvas');
@@ -470,6 +658,9 @@ function loadProject(id) {
 
   ensureTrackPresence();
   appState.activeTrackId = appState.tracks[0].id;
+  appState.currentProjectId = project.id;
+  appState.currentProjectName = project.name;
+  syncProjectTitle();
   syncPreviewDisplay(getActiveTrack());
   renderSidebar(sidebarActions);
   renderTrackStrip(stripActions);
@@ -478,6 +669,80 @@ function loadProject(id) {
   saveToStorage();
   closeProjectsPanel();
   showToast(`LOADED: ${project.name.toUpperCase()}`);
+}
+
+function createNewProject(options = {}) {
+  if (!options.skipHistory) pushHistory();
+  if (appState.isPlaying) stopPlayback();
+  closeMenu();
+  closeProjectsPanel();
+
+  for (const track of appState.tracks) {
+    clearTimeout(track.timer);
+    trackAllNotesOff(track);
+  }
+
+  appState.tracks.length = 0;
+  appState.trackIdSeq = 1;
+  appState.activeTrackId = 1;
+  appState.undoStack.length = 0;
+  appState.redoStack.length = 0;
+  appState.settingsClipboard = null;
+  appState.currentProjectId = null;
+  appState.currentProjectName = '';
+  appState.confirmCallback = null;
+
+  ensureTrackPresence();
+  const track = getActiveTrack();
+  syncPreviewDisplay(track);
+  renderSidebar(sidebarActions);
+  renderTrackStrip(stripActions);
+  drawStats();
+  updateUndoButtons();
+  updatePlayBtn();
+  if (track) refs.stepLabel.textContent = `— / ${track.steps}`;
+  syncProjectTitle();
+  saveToStorage();
+  showToast(options.toastMessage || 'NEW PROJECT');
+}
+
+function beginProjectTitleRename() {
+  refs.projectTitleLabel.style.display = 'none';
+  refs.projectTitleInput.classList.add('visible');
+  refs.projectTitleInput.value = appState.currentProjectName || '';
+  refs.projectTitleInput.focus();
+  refs.projectTitleInput.select();
+}
+
+function commitProjectTitleRename() {
+  const nextName = refs.projectTitleInput.value.trim();
+  refs.projectTitleInput.classList.remove('visible');
+  refs.projectTitleLabel.style.display = '';
+
+  if (!nextName) {
+    syncProjectTitle();
+    return;
+  }
+
+  pushHistory();
+  appState.currentProjectName = nextName;
+  if (appState.currentProjectId) {
+    persistProject(nextName, appState.currentProjectId);
+    renderProjects();
+  } else {
+    saveToStorage();
+  }
+  syncProjectTitle();
+  showToast('PROJECT RENAMED');
+}
+
+function sanitizeNumberInput(input, fallback) {
+  const min = input.min === '' ? Number.NEGATIVE_INFINITY : Number(input.min);
+  const max = input.max === '' ? Number.POSITIVE_INFINITY : Number(input.max);
+  const rawValue = Number(input.value);
+  const nextValue = Number.isFinite(rawValue) ? clamp(Math.round(rawValue), min, max) : fallback;
+  input.value = String(nextValue);
+  return nextValue;
 }
 
 function bindEvents() {
@@ -497,10 +762,29 @@ function bindEvents() {
     const file = event.dataTransfer.files[0];
     if (file?.type.startsWith('image/')) loadImage(file, getActiveTrack());
   });
+  refs.dropZone.addEventListener('click', () => {
+    refs.fileInput.value = '';
+    if (typeof refs.fileInput.showPicker === 'function') refs.fileInput.showPicker();
+    else refs.fileInput.click();
+  });
   refs.fileInput.addEventListener('change', (event) => {
     const file = event.target.files[0];
     if (file) loadImage(file, getActiveTrack());
     refs.fileInput.value = '';
+  });
+  refs.progressTrack.addEventListener('click', (event) => {
+    const rect = refs.progressTrack.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    seekPlayback((event.clientX - rect.left) / rect.width);
+  });
+
+  refs.playModeAllBtn.addEventListener('click', () => {
+    appState.playbackScope = 'all';
+    updatePlayBtn();
+  });
+  refs.playModeCurrentBtn.addEventListener('click', () => {
+    appState.playbackScope = 'current';
+    updatePlayBtn();
   });
 
   refs.midiOutput.addEventListener('pointerdown', refreshMidiSelector);
@@ -562,7 +846,7 @@ function bindEvents() {
     const track = getActiveTrack();
     if (!track) return;
     pushHistory();
-    track.channel = Number(refs.midiChannel.value);
+    track.channel = sanitizeNumberInput(refs.midiChannel, track.channel);
     renderTrackStrip(stripActions);
     saveToStorage();
   });
@@ -571,15 +855,22 @@ function bindEvents() {
     const track = getActiveTrack();
     if (!track) return;
     pushHistory();
-    track.bpm = Number(refs.bpm.value);
+    track.bpm = sanitizeNumberInput(refs.bpm, track.bpm);
     saveToStorage();
   });
-  refs.steps.addEventListener('change', () => withTrack((track) => { track.steps = Number(refs.steps.value); }));
+  refs.steps.addEventListener('change', () => {
+    const activeTrack = getActiveTrack();
+    if (!activeTrack) return;
+    withTrack((track) => {
+      track.steps = sanitizeNumberInput(refs.steps, track.steps);
+    });
+    if (!appState.isPlaying) refs.stepLabel.textContent = `— / ${getActiveTrack().steps}`;
+  });
   refs.noteDiv.addEventListener('change', () => {
     const track = getActiveTrack();
     if (!track) return;
     pushHistory();
-    track.noteDiv = Number(refs.noteDiv.value);
+    track.noteDiv = Number(refs.noteDiv.value) || track.noteDiv;
     saveToStorage();
   });
   refs.loopMode.addEventListener('change', () => {
@@ -622,6 +913,12 @@ function bindEvents() {
     confirmRemoveTrack(appState.activeTrackId);
   });
 
+  refs.newProjectBtn.addEventListener('click', () => createNewProject());
+  refs.quickSaveBtn.addEventListener('click', quickSaveProject);
+  refs.deleteProjectBtn.addEventListener('click', () => {
+    const label = appState.currentProjectName || 'this project';
+    showConfirm(`DELETE ${label.toUpperCase()}?`, deleteCurrentProject);
+  });
   refs.projectsBtn.addEventListener('click', openProjectsPanel);
   refs.projCloseBtn.addEventListener('click', closeProjectsPanel);
   refs.projSaveBtn.addEventListener('click', saveProject);
@@ -661,9 +958,19 @@ function bindEvents() {
 
   refs.undoBtn.addEventListener('click', undo);
   refs.redoBtn.addEventListener('click', redo);
+  refs.projectTitleLabel.addEventListener('dblclick', beginProjectTitleRename);
+  refs.projectTitleInput.addEventListener('blur', commitProjectTitleRename);
+  refs.projectTitleInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') commitProjectTitleRename();
+    if (event.key === 'Escape') {
+      refs.projectTitleInput.classList.remove('visible');
+      refs.projectTitleLabel.style.display = '';
+      syncProjectTitle();
+    }
+  });
 
-  refs.playBtn.addEventListener('click', () => (appState.isPlaying ? stopPlayback() : startPlayback()));
-  refs.transportPlayBtn.addEventListener('click', () => (appState.isPlaying ? stopPlayback() : startPlayback()));
+  refs.playBtn.addEventListener('click', () => (appState.isPlaying ? stopPlayback() : startPlaybackFromBeginning()));
+  refs.transportPlayBtn.addEventListener('click', () => (appState.isPlaying ? stopPlayback() : startPlaybackFromBeginning()));
   refs.transportRew.addEventListener('click', () => {
     if (appState.isPlaying) stopPlayback();
   });
@@ -672,7 +979,7 @@ function bindEvents() {
     const mac = event.metaKey || event.ctrlKey;
     if (event.code === 'Space' && event.target.tagName !== 'INPUT' && event.target.tagName !== 'SELECT') {
       event.preventDefault();
-      appState.isPlaying ? stopPlayback() : startPlayback();
+      appState.isPlaying ? stopPlayback() : startPlaybackFromBeginning();
       return;
     }
     if (mac && !event.shiftKey && event.key === 'z') {
@@ -694,7 +1001,10 @@ function bindEvents() {
     updateDualRange();
   });
 
-  refs.confirmCancel.addEventListener('click', () => refs.confirmOverlay.classList.remove('open'));
+  refs.confirmCancel.addEventListener('click', () => {
+    appState.confirmCallback = null;
+    refs.confirmOverlay.classList.remove('open');
+  });
   refs.confirmOk.addEventListener('click', () => {
     refs.confirmOverlay.classList.remove('open');
     if (appState.confirmCallback) {
@@ -704,7 +1014,10 @@ function bindEvents() {
     }
   });
   refs.confirmOverlay.addEventListener('click', (event) => {
-    if (event.target === refs.confirmOverlay) refs.confirmOverlay.classList.remove('open');
+    if (event.target === refs.confirmOverlay) {
+      appState.confirmCallback = null;
+      refs.confirmOverlay.classList.remove('open');
+    }
   });
 
   refs.trackMenuBtn.addEventListener('click', (event) => {
@@ -721,10 +1034,21 @@ function bindEvents() {
 }
 
 function init() {
-  loadFromStorage();
+  setPlaybackHooks({ activateTrack: setActiveTrack });
+  loadFromStorage((track) => {
+    fitImageBounds(track);
+    computeSequence(track);
+    renderTrackStrip(stripActions);
+    if (track.id === appState.activeTrackId) {
+      syncPreviewDisplay(track);
+      drawStats();
+    }
+    updatePlayBtn();
+  });
   ensureTrackPresence();
   renderSidebar(sidebarActions);
   renderTrackStrip(stripActions);
+  syncProjectTitle();
   syncPreviewDisplay(getActiveTrack());
   drawStats();
   updateUndoButtons();

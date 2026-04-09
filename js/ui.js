@@ -1,4 +1,4 @@
-import { BLACK_KEYS, WHITE_KEYS } from './constants.js';
+import { BLACK_KEYS, NOTE_NAMES, WHITE_KEYS } from './constants.js';
 import { refs } from './dom.js';
 import { appState, getActiveTrack, trackDisplayName } from './state.js';
 import { midiNoteName, rgbToHsl } from './utils.js';
@@ -34,7 +34,10 @@ export function syncPreviewDisplay(track) {
 }
 
 export function updatePlayBtn() {
-  const enabled = Boolean(appState.selectedOutput && appState.tracks.some((track) => track.analysisCanvas));
+  const hasPlayableTrack = appState.playbackScope === 'current'
+    ? Boolean(getActiveTrack()?.analysisCanvas)
+    : appState.tracks.some((track) => track.analysisCanvas);
+  const enabled = Boolean(appState.selectedOutput && hasPlayableTrack);
   refs.playBtn.disabled = !enabled;
   refs.transportPlayBtn.disabled = !enabled;
   syncTransport();
@@ -42,6 +45,8 @@ export function updatePlayBtn() {
 
 export function syncTransport() {
   refs.transportPlayBtn.disabled = refs.playBtn.disabled;
+  refs.playModeAllBtn.classList.toggle('active', appState.playbackScope === 'all');
+  refs.playModeCurrentBtn.classList.toggle('active', appState.playbackScope === 'current');
   if (appState.isPlaying) {
     refs.transportPlayBtn.textContent = '⏹';
     refs.transportPlayBtn.classList.add('playing');
@@ -240,6 +245,10 @@ export function renderPiano(track, actions) {
     key.className = `piano-black ${activePitchClasses.has(pc) ? 'on' : 'off'}`;
     key.style.left = `${leftPct}%`;
     key.style.width = '9%';
+    const keyLabel = document.createElement('span');
+    keyLabel.className = 'piano-black-label';
+    keyLabel.textContent = NOTE_NAMES[pc];
+    key.appendChild(keyLabel);
     key.addEventListener('click', () => actions.onTogglePitchClass(track, pc));
     refs.pianoKeyboard.appendChild(key);
   }
@@ -253,6 +262,8 @@ export function renderTrackStrip(actions) {
   for (const track of appState.tracks) {
     const chip = document.createElement('div');
     chip.className = `track-chip${track.id === appState.activeTrackId ? ' selected' : ''}${track.muted ? ' muted' : ''}${track.analysisCanvas ? ' has-image' : ''}`;
+    chip.draggable = true;
+    chip.dataset.trackId = String(track.id);
 
     const nameRow = document.createElement('div');
     nameRow.className = 'chip-name-row';
@@ -299,8 +310,8 @@ export function renderTrackStrip(actions) {
     thumbArea.className = 'chip-media';
     if (track.analysisCanvas) {
       const thumb = document.createElement('canvas');
-      thumb.width = 80;
-      thumb.height = 30;
+      thumb.width = 76;
+      thumb.height = 60;
       const ctx = thumb.getContext('2d');
       const sourceRatio = track.analysisCanvas.width / track.analysisCanvas.height;
       const targetRatio = thumb.width / thumb.height;
@@ -338,14 +349,26 @@ export function renderTrackStrip(actions) {
         actions.onToggleMute(track);
       });
       thumbArea.appendChild(muteButton);
+
+      const duplicateButton = document.createElement('button');
+      duplicateButton.className = 'chip-action chip-duplicate';
+      duplicateButton.title = 'Duplicate track';
+      duplicateButton.textContent = '⧉';
+      duplicateButton.addEventListener('click', (event) => {
+        event.stopPropagation();
+        actions.onDuplicateTrack(track);
+      });
+      thumbArea.appendChild(duplicateButton);
+
       chip.append(thumbArea);
     } else {
       footer.append(nameLabel, nameInput);
       chip.append(thumbArea, footer);
     }
 
-    const removeButton = document.createElement('span');
-    removeButton.className = 'chip-remove';
+    const removeButton = document.createElement('button');
+    removeButton.className = 'chip-action chip-remove';
+    removeButton.title = 'Delete track';
     removeButton.textContent = '×';
     removeButton.addEventListener('click', (event) => {
       event.stopPropagation();
@@ -354,6 +377,36 @@ export function renderTrackStrip(actions) {
 
     chip.appendChild(removeButton);
     chip.addEventListener('click', () => actions.onSelectTrack(track.id));
+    chip.addEventListener('dragstart', (event) => {
+      event.dataTransfer?.setData('text/plain', String(track.id));
+      event.dataTransfer.effectAllowed = 'move';
+      chip.classList.add('dragging');
+    });
+    chip.addEventListener('dragend', () => {
+      chip.classList.remove('dragging', 'drag-over-before', 'drag-over-after');
+      refs.trackStrip.querySelectorAll('.drag-over-before, .drag-over-after').forEach((node) => {
+        node.classList.remove('drag-over-before', 'drag-over-after');
+      });
+    });
+    chip.addEventListener('dragover', (event) => {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+      const rect = chip.getBoundingClientRect();
+      const placeAfter = event.clientX > rect.left + rect.width / 2;
+      chip.classList.toggle('drag-over-before', !placeAfter);
+      chip.classList.toggle('drag-over-after', placeAfter);
+    });
+    chip.addEventListener('dragleave', () => {
+      chip.classList.remove('drag-over-before', 'drag-over-after');
+    });
+    chip.addEventListener('drop', (event) => {
+      event.preventDefault();
+      const sourceId = Number(event.dataTransfer?.getData('text/plain'));
+      const rect = chip.getBoundingClientRect();
+      const placement = event.clientX > rect.left + rect.width / 2 ? 'after' : 'before';
+      chip.classList.remove('drag-over-before', 'drag-over-after');
+      if (Number.isFinite(sourceId)) actions.onReorderTrack(sourceId, track.id, placement);
+    });
     refs.trackStrip.appendChild(chip);
   }
 
@@ -368,6 +421,8 @@ export function renderSidebar(actions) {
   const track = getActiveTrack();
   if (!track) return;
 
+  refs.crtPrimaryLabel.textContent = trackDisplayName(track);
+  refs.crtSecondaryLabel.textContent = '';
   refs.sidebarTrackLabel.textContent = trackDisplayName(track);
   refs.pasteSettingsBtn.style.display = appState.settingsClipboard ? '' : 'none';
   refs.midiChannel.value = track.channel;
@@ -409,6 +464,12 @@ export function refreshKnobs() {
   }
 }
 
+export function syncProjectTitle() {
+  const name = appState.currentProjectName?.trim();
+  refs.projectTitleLabel.textContent = name || 'IMAGE → MIDI';
+  refs.projectTitleInput.value = name || '';
+}
+
 export function renderProjectsList(projects, actions) {
   if (!projects.length) {
     refs.projList.innerHTML = '<div class="proj-empty">NO SAVED PROJECTS</div>';
@@ -420,9 +481,32 @@ export function renderProjectsList(projects, actions) {
     const item = document.createElement('div');
     item.className = 'proj-item';
 
-    const name = document.createElement('span');
-    name.className = 'proj-item-name';
-    name.textContent = project.name;
+    const nameWrap = document.createElement('div');
+    nameWrap.className = 'proj-item-name-wrap';
+
+    if (appState.editingProjectId === project.id) {
+      const renameInput = document.createElement('input');
+      renameInput.className = 'proj-item-name-input';
+      renameInput.type = 'text';
+      renameInput.maxLength = 60;
+      renameInput.value = project.name;
+      renameInput.addEventListener('click', (event) => event.stopPropagation());
+      renameInput.addEventListener('blur', () => actions.onCommitRename(project.id, renameInput.value.trim()));
+      renameInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') actions.onCommitRename(project.id, renameInput.value.trim());
+        if (event.key === 'Escape') actions.onCancelRename();
+      });
+      nameWrap.appendChild(renameInput);
+      requestAnimationFrame(() => {
+        renameInput.focus();
+        renameInput.select();
+      });
+    } else {
+      const name = document.createElement('span');
+      name.className = 'proj-item-name';
+      name.textContent = project.name;
+      nameWrap.appendChild(name);
+    }
 
     const date = document.createElement('span');
     date.className = 'proj-item-date';
@@ -434,12 +518,52 @@ export function renderProjectsList(projects, actions) {
     loadButton.textContent = 'LOAD';
     loadButton.addEventListener('click', () => actions.onLoad(project.id));
 
-    const deleteButton = document.createElement('button');
-    deleteButton.className = 'proj-item-del';
-    deleteButton.textContent = '×';
-    deleteButton.addEventListener('click', () => actions.onDelete(project.id));
+    const menuWrap = document.createElement('div');
+    menuWrap.className = 'menu-wrap proj-item-menu-wrap';
 
-    item.append(name, date, loadButton, deleteButton);
+    const menuButton = document.createElement('button');
+    menuButton.className = 'menu-btn proj-item-menu-btn';
+    menuButton.textContent = '⋯';
+    menuButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      dropdown.classList.toggle('open');
+    });
+
+    const dropdown = document.createElement('div');
+    dropdown.className = 'menu-dropdown proj-item-dropdown';
+
+    const renameButton = document.createElement('button');
+    renameButton.className = 'menu-item';
+    renameButton.textContent = 'RENAME';
+    renameButton.addEventListener('click', () => {
+      dropdown.classList.remove('open');
+      actions.onRename(project.id);
+    });
+
+    const duplicateButton = document.createElement('button');
+    duplicateButton.className = 'menu-item';
+    duplicateButton.textContent = 'DUPLICATE';
+    duplicateButton.addEventListener('click', () => {
+      dropdown.classList.remove('open');
+      actions.onDuplicate(project.id);
+    });
+
+    const deleteButton = document.createElement('button');
+    deleteButton.className = 'menu-item danger';
+    deleteButton.textContent = 'DELETE';
+    deleteButton.addEventListener('click', () => {
+      dropdown.classList.remove('open');
+      actions.onDelete(project.id);
+    });
+
+    menuWrap.addEventListener('focusout', (event) => {
+      if (!menuWrap.contains(event.relatedTarget)) dropdown.classList.remove('open');
+    });
+
+    dropdown.append(renameButton, duplicateButton, deleteButton);
+    menuWrap.append(menuButton, dropdown);
+
+    item.append(nameWrap, date, loadButton, menuWrap);
     refs.projList.appendChild(item);
   }
 }

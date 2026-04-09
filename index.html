@@ -14,11 +14,19 @@
     <div class="screw br"></div>
 
     <div class="top-plate">
-      <span class="logo-text">IMAGE → MIDI</span>
+      <div class="project-header">
+        <button class="hw-btn hw-icon-btn" id="new-project-btn" title="New project">+</button>
+        <button class="hw-btn" id="projects-btn">PROJ</button>
+        <div class="project-title-wrap">
+        <span class="logo-text" id="project-title-label">IMAGE → MIDI</span>
+        <input type="text" id="project-title-input" class="project-title-input" maxlength="60" placeholder="Project name">
+        </div>
+      </div>
       <div class="top-controls">
         <button class="hw-btn" id="undo-btn" disabled title="Undo (⌘Z)">↩</button>
         <button class="hw-btn" id="redo-btn" disabled title="Redo (⌘⇧Z)">↪</button>
-        <button class="hw-btn" id="projects-btn">PROJ</button>
+        <button class="hw-btn" id="quick-save-btn" title="Save project">SAVE</button>
+        <button class="hw-btn" id="delete-project-btn" title="Delete project">DEL</button>
         <span id="midi-badge" class="warn">INIT…</span>
       </div>
       <button id="export-btn" style="display:none">EXPORT</button>
@@ -42,8 +50,8 @@
             </div>
           </div>
           <div class="crt-footer">
-            <span class="crt-label">IMG_SLOT_01</span>
-            <span class="crt-label">SCAN READY</span>
+            <span class="crt-label">TRACK 1</span>
+            <span class="crt-label"></span>
           </div>
         </div>
 
@@ -122,21 +130,14 @@
           <input type="range" id="velocity-scale" min="1" max="200" value="100" style="display:none">
           <input type="range" id="max-poly" min="1" max="8" value="3" style="display:none">
           <input type="range" id="density" min="0" max="100" value="100" style="display:none">
-          <div class="knobs-meta">
-            <div class="ctrl-row">
-              <div class="ctrl-lbl">COLOR</div>
-              <select id="color-mode">
-                <option value="luma">Luma</option>
-                <option value="rgb">R/G/B</option>
-                <option value="hue">Hue</option>
-              </select>
-            </div>
-            <div class="ctrl-row ctrl-row-inline">
-              <div class="ctrl-lbl">NORM</div>
-              <input type="checkbox" id="normalize" checked>
-              <div class="ctrl-lbl compact-lbl">INVERT</div>
-              <input type="checkbox" id="invert-mode">
-            </div>
+          <div class="knobs-meta" style="display:none">
+            <select id="color-mode">
+              <option value="luma">Luma</option>
+              <option value="rgb" selected>R/G/B</option>
+              <option value="hue">Hue</option>
+            </select>
+            <input type="checkbox" id="normalize" checked>
+            <input type="checkbox" id="invert-mode">
           </div>
         </div>
 
@@ -214,6 +215,10 @@
 
     <div class="transport-bar">
       <div class="transport-group">
+        <div class="transport-mode" id="transport-mode">
+          <button class="mode-btn active" id="play-mode-all-btn" type="button">ALL</button>
+          <button class="mode-btn" id="play-mode-current-btn" type="button">ONE</button>
+        </div>
         <button class="t-btn orange" id="transport-play-btn" disabled title="Play/Stop (Space)">▶</button>
       </div>
       <div id="progress-track"><div id="progress-fill"></div></div>

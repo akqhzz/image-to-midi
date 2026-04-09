@@ -1,5 +1,5 @@
 import { CHORD_INTERVALS } from './constants.js';
-import { rgbToHsl, snapToAllowed } from './utils.js';
+import { rgbToHsl, snapToAllowedInRange } from './utils.js';
 import { appState } from './state.js';
 
 export function computeSequence(track) {
@@ -73,13 +73,13 @@ export function computeSequence(track) {
     const stepNotes = [];
     const seen = new Set();
     for (const { i, value } of candidates.slice(0, track.maxPoly)) {
-      const rootNote = snapToAllowed(track.noteMin + i, track.allowedPitchClasses);
+      const rootNote = snapToAllowedInRange(track.noteMin + i, track.allowedPitchClasses, track.noteMin, track.noteMax);
       if (rootNote === null) continue;
       const velocity = Math.round(Math.min(127, value * 127));
 
       for (const interval of CHORD_INTERVALS[track.chord]) {
-        const note = snapToAllowed(rootNote + interval, track.allowedPitchClasses);
-        if (note !== null && note >= 0 && note <= 127 && !seen.has(note)) {
+        const note = snapToAllowedInRange(rootNote + interval, track.allowedPitchClasses, track.noteMin, track.noteMax);
+        if (note !== null && !seen.has(note)) {
           seen.add(note);
           stepNotes.push({ note, velocity });
         }
