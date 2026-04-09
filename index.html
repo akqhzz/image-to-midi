@@ -84,13 +84,29 @@
         </div>
 
         <div class="ctrl-section" style="flex-shrink:0">
-          <div class="ctrl-title">MIDI OUTPUT</div>
-          <div class="ctrl-row">
+          <div class="ctrl-row output-mode-row">
+            <div class="ctrl-lbl">MODE</div>
+            <div class="output-mode-toggle" id="output-mode-toggle">
+              <button class="output-mode-btn active" id="output-mode-midi-btn" type="button">MIDI</button>
+              <button class="output-mode-btn" id="output-mode-music-btn" type="button">MUSIC</button>
+            </div>
+          </div>
+          <div class="ctrl-row" id="midi-output-row">
+            <div class="ctrl-lbl">OUTPUT</div>
             <select id="midi-output" style="flex:1"><option value="">— none —</option></select>
             <div class="channel-field">
               <span class="channel-label">CH</span>
               <input type="number" id="midi-channel" min="1" max="16" value="1" title="Channel">
             </div>
+          </div>
+          <div class="ctrl-row" id="music-instrument-row" style="display:none">
+            <div class="ctrl-lbl">SOUND</div>
+            <select id="music-instrument">
+              <option value="aurora">AURORA PAD</option>
+              <option value="glass">GLASS HARP</option>
+              <option value="choir">MIST CHOIR</option>
+              <option value="nocturne">NOCTURNE</option>
+            </select>
           </div>
         </div>
 

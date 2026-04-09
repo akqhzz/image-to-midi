@@ -41,12 +41,13 @@ export function saveToStorage() {
   appState.saveTimer = setTimeout(() => {
     try {
       const data = {
-        version: 2,
+        version: 3,
         activeTrackId: appState.activeTrackId,
         trackIdSeq: appState.trackIdSeq,
         settingsClipboard: appState.settingsClipboard,
         currentProjectId: appState.currentProjectId,
         currentProjectName: appState.currentProjectName,
+        outputMode: appState.outputMode,
         tracks: appState.tracks.map((track) => serializeTrackRecord(track, true)),
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -61,6 +62,7 @@ export function loadFromStorage(onTrackImageLoaded) {
       appState.settingsClipboard = null;
       appState.currentProjectId = null;
       appState.currentProjectName = '';
+      appState.outputMode = 'midi';
       ensureTrackPresence();
       return;
     }
@@ -77,6 +79,7 @@ export function loadFromStorage(onTrackImageLoaded) {
     appState.settingsClipboard = data?.settingsClipboard || null;
     appState.currentProjectId = data?.currentProjectId || null;
     appState.currentProjectName = data?.currentProjectName || '';
+    appState.outputMode = data?.outputMode === 'music' ? 'music' : 'midi';
 
     for (const { id, settings, imageDataUrl } of tracks) {
       const track = createTrack();
@@ -103,6 +106,7 @@ export function loadFromStorage(onTrackImageLoaded) {
     appState.settingsClipboard = null;
     appState.currentProjectId = null;
     appState.currentProjectName = '';
+    appState.outputMode = 'midi';
     ensureTrackPresence();
   }
 }

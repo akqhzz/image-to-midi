@@ -10,6 +10,7 @@ export const appState = {
   currentProjectId: null,
   currentProjectName: '',
   editingProjectId: null,
+  outputMode: 'midi',
   playbackScope: 'all',
   playbackStartRatio: 0,
   saveTimer: null,
@@ -35,6 +36,7 @@ export function createTrack() {
     timer: null,
     activeNotes: new Set(),
     channel: Math.min(id, 16),
+    instrument: 'aurora',
     noteMin: 36,
     noteMax: 84,
     chord: 'major',
@@ -52,6 +54,7 @@ export function createTrack() {
     loop: true,
     volume: 100,
     muted: false,
+    activeVoices: new Map(),
   };
 }
 
@@ -69,6 +72,7 @@ export function serializeSettings(track) {
   return {
     name: track.name,
     channel: track.channel,
+    instrument: track.instrument,
     noteMin: track.noteMin,
     noteMax: track.noteMax,
     chord: track.chord,
@@ -92,7 +96,9 @@ export function serializeSettings(track) {
 export function applySettings(track, settings) {
   const { allowedPitchClasses, ...rest } = settings;
   Object.assign(track, rest);
+  track.instrument = track.instrument || 'aurora';
   track.allowedPitchClasses = new Set(allowedPitchClasses || [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+  track.activeVoices = new Map();
 }
 
 export function ensureTrackPresence() {

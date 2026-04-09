@@ -37,7 +37,8 @@ export function updatePlayBtn() {
   const hasPlayableTrack = appState.playbackScope === 'current'
     ? Boolean(getActiveTrack()?.analysisCanvas)
     : appState.tracks.some((track) => track.analysisCanvas);
-  const enabled = Boolean(appState.selectedOutput && hasPlayableTrack);
+  const outputReady = appState.outputMode === 'music' ? true : Boolean(appState.selectedOutput);
+  const enabled = Boolean(outputReady && hasPlayableTrack);
   refs.playBtn.disabled = !enabled;
   refs.transportPlayBtn.disabled = !enabled;
   syncTransport();
@@ -426,6 +427,7 @@ export function renderSidebar(actions) {
   refs.sidebarTrackLabel.textContent = trackDisplayName(track);
   refs.pasteSettingsBtn.style.display = appState.settingsClipboard ? '' : 'none';
   refs.midiChannel.value = track.channel;
+  refs.musicInstrument.value = track.instrument;
   refs.noteMinSlider.value = track.noteMin;
   refs.noteMaxSlider.value = track.noteMax;
   refs.noteMinTxt.value = midiNoteName(track.noteMin);
@@ -447,6 +449,10 @@ export function renderSidebar(actions) {
   refs.steps.value = track.steps;
   refs.noteDiv.value = track.noteDiv;
   refs.loopMode.checked = track.loop;
+  refs.outputModeMidiBtn.classList.toggle('active', appState.outputMode === 'midi');
+  refs.outputModeMusicBtn.classList.toggle('active', appState.outputMode === 'music');
+  refs.midiOutputRow.style.display = appState.outputMode === 'midi' ? '' : 'none';
+  refs.musicInstrumentRow.style.display = appState.outputMode === 'music' ? '' : 'none';
 
   renderPiano(track, actions);
   refreshKnobs();

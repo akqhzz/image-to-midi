@@ -1,6 +1,7 @@
 import { refs } from './dom.js';
 import { exportSession, getProjects, importSessionFile, loadFromStorage, saveToStorage, setProjects } from './persistence.js';
 import { initMidi, refreshOutputs, updateSelectedOutput, trackAllNotesOff } from './midi.js';
+import { ensureMusicReady } from './music.js';
 import { computeSequence } from './sequence.js';
 import { appState, applySettings, createTrack, ensureTrackPresence, getActiveTrack, serializeSettings, trackDisplayName } from './state.js';
 import { drawStats, refreshKnobs, renderProjectsList, renderSidebar, renderTrackStrip, syncPreviewDisplay, syncProjectTitle, updateFilterCount, updatePlayBtn } from './ui.js';
@@ -47,6 +48,7 @@ function captureSnap() {
     activeTrackId: appState.activeTrackId,
     currentProjectId: appState.currentProjectId,
     currentProjectName: appState.currentProjectName,
+    outputMode: appState.outputMode,
     settingsClipboard: appState.settingsClipboard ? structuredClone(appState.settingsClipboard) : null,
     projects: getProjects(),
     tracks: appState.tracks.map((track) => ({
@@ -85,6 +87,7 @@ function applySnap(snapshot) {
   appState.activeTrackId = snapshot.activeTrackId;
   appState.currentProjectId = snapshot.currentProjectId ?? null;
   appState.currentProjectName = snapshot.currentProjectName ?? '';
+  appState.outputMode = snapshot.outputMode === 'music' ? 'music' : 'midi';
   appState.settingsClipboard = snapshot.settingsClipboard ? structuredClone(snapshot.settingsClipboard) : null;
   if (Array.isArray(snapshot.projects)) setProjects(snapshot.projects);
   ensureTrackPresence();
@@ -268,7 +271,35 @@ function reorderTrack(sourceId, targetId, placement = 'before') {
 
 function startPlaybackFromBeginning() {
   appState.playbackStartRatio = 0;
+  return startPlaybackWithCurrentMode();
+}
+
+async function startPlaybackWithCurrentMode() {
+  if (appState.outputMode === 'music') {
+    const ready = await ensureMusicReady();
+    if (!ready) {
+      showToast('AUDIO UNAVAILABLE');
+      return;
+    }
+  }
   startPlayback();
+}
+
+async function togglePlayback() {
+  if (appState.isPlaying) {
+    stopPlayback();
+    return;
+  }
+  await startPlaybackFromBeginning();
+}
+
+function switchOutputMode(nextMode) {
+  if (nextMode === appState.outputMode) return;
+  if (appState.isPlaying) stopPlayback();
+  appState.outputMode = nextMode === 'music' ? 'music' : 'midi';
+  renderSidebar(sidebarActions);
+  updatePlayBtn();
+  saveToStorage();
 }
 
 function removeTrack(id) {
@@ -515,6 +546,7 @@ function buildProjectSnapshot(name, id = Date.now()) {
     id,
     name,
     timestamp: new Date().toISOString(),
+    outputMode: appState.outputMode,
     tracks: appState.tracks.map((track) => ({
       id: track.id,
       settings: serializeSettings(track),
@@ -660,6 +692,7 @@ function loadProject(id) {
   appState.activeTrackId = appState.tracks[0].id;
   appState.currentProjectId = project.id;
   appState.currentProjectName = project.name;
+  appState.outputMode = project.outputMode === 'music' ? 'music' : 'midi';
   syncProjectTitle();
   syncPreviewDisplay(getActiveTrack());
   renderSidebar(sidebarActions);
@@ -690,6 +723,7 @@ function createNewProject(options = {}) {
   appState.settingsClipboard = null;
   appState.currentProjectId = null;
   appState.currentProjectName = '';
+  appState.outputMode = 'midi';
   appState.confirmCallback = null;
 
   ensureTrackPresence();
@@ -786,10 +820,19 @@ function bindEvents() {
     appState.playbackScope = 'current';
     updatePlayBtn();
   });
+  refs.outputModeMidiBtn.addEventListener('click', () => switchOutputMode('midi'));
+  refs.outputModeMusicBtn.addEventListener('click', () => switchOutputMode('music'));
 
   refs.midiOutput.addEventListener('pointerdown', refreshMidiSelector);
   refs.midiOutput.addEventListener('focus', refreshMidiSelector);
   refs.midiOutput.addEventListener('change', () => updateSelectedOutput(updatePlayBtn));
+  refs.musicInstrument.addEventListener('change', () => {
+    const track = getActiveTrack();
+    if (!track) return;
+    pushHistory();
+    track.instrument = refs.musicInstrument.value || 'aurora';
+    saveToStorage();
+  });
 
   refs.noteMinSlider.addEventListener('input', () => {
     if (Number(refs.noteMinSlider.value) > Number(refs.noteMaxSlider.value)) {
@@ -969,8 +1012,8 @@ function bindEvents() {
     }
   });
 
-  refs.playBtn.addEventListener('click', () => (appState.isPlaying ? stopPlayback() : startPlaybackFromBeginning()));
-  refs.transportPlayBtn.addEventListener('click', () => (appState.isPlaying ? stopPlayback() : startPlaybackFromBeginning()));
+  refs.playBtn.addEventListener('click', () => { void togglePlayback(); });
+  refs.transportPlayBtn.addEventListener('click', () => { void togglePlayback(); });
   refs.transportRew.addEventListener('click', () => {
     if (appState.isPlaying) stopPlayback();
   });
@@ -979,7 +1022,7 @@ function bindEvents() {
     const mac = event.metaKey || event.ctrlKey;
     if (event.code === 'Space' && event.target.tagName !== 'INPUT' && event.target.tagName !== 'SELECT') {
       event.preventDefault();
-      appState.isPlaying ? stopPlayback() : startPlaybackFromBeginning();
+      void togglePlayback();
       return;
     }
     if (mac && !event.shiftKey && event.key === 'z') {

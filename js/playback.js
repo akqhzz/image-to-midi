@@ -1,5 +1,6 @@
 import { refs } from './dom.js';
 import { trackAllNotesOff, trackNoteOn } from './midi.js';
+import { trackMusicAllNotesOff, trackMusicNoteOn } from './music.js';
 import { computeAllSequences } from './sequence.js';
 import { appState, getActiveTrack } from './state.js';
 import { drawStats, syncTransport } from './ui.js';
@@ -13,7 +14,7 @@ export function setPlaybackHooks(hooks) {
 }
 
 export function startPlayback() {
-  if (!appState.selectedOutput) return;
+  if (appState.outputMode === 'midi' && !appState.selectedOutput) return;
   computeAllSequences();
   appState.isPlaying = true;
   refs.playBtn.textContent = 'STOP';
@@ -57,7 +58,7 @@ function stopTrackTimers() {
   for (const track of appState.tracks) {
     clearTimeout(track.timer);
     track.timer = null;
-    trackAllNotesOff(track);
+    silenceTrack(track);
   }
 }
 
@@ -66,12 +67,12 @@ function playTrackStep(track, step) {
 
   const steps = track.sequence.length || track.steps;
   const ms = (60000 / track.bpm) / track.noteDiv;
-  trackAllNotesOff(track);
+  silenceTrack(track);
 
   if (!track.muted && track.sequence[step]) {
     for (const { note, velocity } of track.sequence[step]) {
       const scaledVelocity = Math.round(velocity * (track.velocityScale / 100) * (track.volume / 100));
-      if (scaledVelocity > 0) trackNoteOn(track, note, scaledVelocity);
+      if (scaledVelocity > 0) playNote(track, note, scaledVelocity, ms);
     }
   }
 
@@ -102,7 +103,7 @@ function playTrackStep(track, step) {
 }
 
 function advanceToNextTrack(track) {
-  trackAllNotesOff(track);
+  silenceTrack(track);
   track.timer = null;
   if (!appState.isPlaying) return;
 
@@ -121,7 +122,7 @@ function advanceToNextTrack(track) {
 }
 
 function finishTrackPlayback(track) {
-  trackAllNotesOff(track);
+  silenceTrack(track);
   track.timer = null;
   if (!appState.isPlaying) return;
 
@@ -155,4 +156,14 @@ export function seekPlayback(ratio) {
 function ratioToStep(track, ratio) {
   const steps = track.sequence.length || track.steps || 1;
   return Math.max(0, Math.min(steps - 1, Math.floor(ratio * steps)));
+}
+
+function silenceTrack(track) {
+  if (appState.outputMode === 'music') trackMusicAllNotesOff(track);
+  else trackAllNotesOff(track);
+}
+
+function playNote(track, note, velocity, stepMs) {
+  if (appState.outputMode === 'music') trackMusicNoteOn(track, note, velocity, stepMs);
+  else trackNoteOn(track, note, velocity);
 }
